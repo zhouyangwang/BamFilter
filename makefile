@@ -14,7 +14,7 @@ CC = g++
 CFLAGS = -std=c++11 -g -I${DIR_INC}
 
 ${BIN_TARGET}:${OBJ}
-	$(CC) $(OBJ) -lz -o $@
+	$(CC) $(OBJ) -L. -lhts -lz -o $@
 
 ${DIR_OBJ}/%.o:${DIR_SRC}/%.cpp make_obj_dir
 	$(CC) $(CFLAGS) -O3 -c  $< -o $@

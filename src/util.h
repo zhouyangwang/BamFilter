@@ -5,8 +5,10 @@
 #include <string>
 #include <iostream>
 #include <vector>
+#include <map>
 #include <sys/stat.h>
 #include <algorithm>
+#include <sstream>
 
 using namespace std;
 
@@ -84,7 +86,7 @@ inline int split(const string& str, vector<string>& ret_, string sep = ",")
         ret_.push_back(tmp);
         tmp.clear();
     }
-    return 0;
+    return 1;
 }
 
 inline string replace(const string& str, const string& src, const string& dest)
@@ -250,6 +252,30 @@ inline char num2qual(int num) {
 inline void error_exit(const string& msg) {
     cerr << "ERROR: " << msg << endl;
     exit(-1);
+}
+
+inline long str2long(string str)
+{
+    long result;
+    istringstream is(str);
+    is >> result;
+    return result;
+}
+
+inline int str2int(string str)
+{
+    int result;
+    istringstream is(str);
+    is >> result;
+    return result;
+}
+
+//template <typename T>
+inline string val2string(long val){
+    stringstream str;
+    str << val;
+    string result = str.str();
+    return result;
 }
 
 #endif /* UTIL_H */

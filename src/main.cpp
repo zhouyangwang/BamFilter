@@ -5,6 +5,7 @@
 #include "common.h"
 #include <sstream>
 #include "options.h"
+#include "anno.h"
 
 using namespace std;
 
@@ -15,8 +16,8 @@ int main(int argc, char* argv[]){
     cmdline::parser cmd;
     // input/output
     cmd.add<string>("query", 0, "vcf file contains mutations to query", true);
-    cmd.add<string>("cfdna",'c',"bam file contains cfdna reads info. There must be a corresponding .bai file in the same directory",true);
-    cmd.add<string>("gdna",'g', "bam file contains gdna reads info. There must be a corresponding .bai file in the same directory",true);
+    cmd.add<string>("cfdna",'c',"bam file contains cfdna reads info. There must be a corresponding .bai file in the same directory",false);
+    cmd.add<string>("gdna",'g', "bam file contains gdna reads info. There must be a corresponding .bai file in the same directory",false);
     cmd.add<string>("output",'o',"output vcf file. Will be overwritten if already exists",false);
     cmd.add<string>("repeat", 'r', "file contains repeat region in huam genome", false);
 
@@ -24,15 +25,17 @@ int main(int argc, char* argv[]){
     cmd.add<int>("qual", 'q', "drop bases whose quality is less than this", false, 25);
     cmd.add<int>("mismatch-limit", 'm', "if set, drop reads that has more mismatches than the limit. requires a 'MD' or a 'NM' tag to be present.", false,-1);
 
-    cmd.add<bool>("simple",'s',"annotate less informations into vcf output",false, false);
-    cmd.add<bool>("fast",'f',"do not infer origin read size by CIGAR, it can be faster and consume less memory.",false, false);
-    cmd.add<bool>("drop-inconsist", 0,"drop different reads stack at the same position. This decreases sensitivity.",false, false);
-    cmd.add<bool>("dropXA",0, "drop reads that has XA tag (multiple alignment)",false, false);
-    cmd.add<bool>("UMI", 'u', "count umi sequences when sample sequenced by duplex UMI", false, false);
-    cmd.add<bool>("indel",0, "only indel exists in vcf file",false, false);
-    cmd.add<bool>("snp", 0, "only snp exists in vcf file", false, false);
+    cmd.add("simple",'s',"annotate less informations into vcf output");
+    cmd.add("fast",'f',"do not infer origin read size by CIGAR, it can be faster and consume less memory.");
+    cmd.add("drop-inconsist", 0,"drop different reads stack at the same position. This decreases sensitivity.");
+    cmd.add("dropXA",0, "drop reads that has XA tag (multiple alignment)");
+    cmd.add("UMI", 'u', "count umi sequences when sample sequenced by duplex UMI");
+    cmd.add("indel",0, "only indel exists in vcf file");
+    cmd.add("snp", 0, "only snp exists in vcf file");
 
     cmd.add("debug", 0, "output some debug information to STDERR.");
+    cmd.add("continuous", 0, "count for continuous mutation site");
+    cmd.add("h", 0, "detail explanation for result");
 
     cmd.parse_check(argc, argv);
 
@@ -51,13 +54,13 @@ int main(int argc, char* argv[]){
     opt.MinQualDrop = cmd.get<int>("qual");
     opt.ReadMaxMismatch = cmd.get<int>("mismatch-limit");
 
-    opt.FastInferReadSize = cmd.get<bool>("fast");
-    opt.OutputSimpleOverlap = cmd.get<bool>("simple");
-    opt.DropInconsist = cmd.get<bool>("drop-inconsist");
-    opt.ReadDropXA = cmd.get<bool>("dropXA");
-    opt.DuplexUMIStat = cmd.get<bool>("UMI");
-    opt.indel = cmd.get<bool>("indel");
-    opt.snp = cmd.get<bool>("snp");
+    opt.FastInferReadSize = cmd.exist("fast");
+    opt.OutputSimpleOverlap = cmd.exist("simple");
+    opt.DropInconsist = cmd.exist("drop-inconsist");
+    opt.ReadDropXA = cmd.exist("dropXA");
+    opt.DuplexUMIStat = cmd.exist("UMI");
+    opt.indel = cmd.exist("indel");
+    opt.snp = cmd.exist("snp");
     opt.debug = cmd.exist("debug");
 
     opt.validate();
@@ -69,9 +72,12 @@ int main(int argc, char* argv[]){
     }
     command = ss.str();
 
+    Anno anno(&opt);
+    anno.annotation();
+
     time_t t2 = time(NULL);
     cerr << endl << command << endl;
-    cerr << "MrBam " << VERSION_NUMBER << ", time used: " << (t2)-t1 << " seconds" << endl;
+    cerr << "MrBam v:" << VERSION_NUMBER << ", time used: " << (t2)-t1 << " seconds" << endl;
 
     return 0;
 }

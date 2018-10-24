@@ -29,11 +29,13 @@ public:
     bool FastInferReadSize;
     bool DropInconsist;
     bool ReadDropXA;
-    bool ReadMaxMismatch;
+    int ReadMaxMismatch;
     bool DuplexUMIStat;
     bool snp;
     bool indel;
     bool debug;
+
+    bam_hdr_t* bamHeader;
 
 };
 
