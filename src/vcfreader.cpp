@@ -5,7 +5,7 @@ vcfreader::vcfreader(Options *opt){
     mOptions = opt;
     vcffp.open(mOptions->QueryVcf);
     if(!vcffp.is_open()){
-        error_exit("vcf file is unable to open");
+        error_exit("unable to open vcf file");
     }
     if(!(mOptions->HumanRepeatFile).empty()){
         repeatfp.open(mOptions->HumanRepeatFile);
@@ -17,15 +17,16 @@ vcfreader::vcfreader(Options *opt){
 
 vcfreader::~vcfreader(){
     vcffp.close();
-    if(repeatfp.is_open()){
+    if(repeatfp.is_open())
         repeatfp.close();
-    }
 }
 
 void vcfreader::getvcfinfo(){
 
     string line;
     string LastChr = "";
+    string lineId = "";
+    string mutationId = "";
     long LastPos = -1;
 
     if(mOptions->LineSkip != 0){
@@ -34,17 +35,19 @@ void vcfreader::getvcfinfo(){
         }
     }
     line = "";
-    vector<string> linesplit;
 
    while(getline(vcffp, line,'\n')){
 
+        vector<string> linesplit;
         if(split(line,linesplit,"\t")){
             long *pos = new long (str2long(linesplit[1]) - 1);
             // pos in vcf is 1-based
 
             string chr = linesplit[0];
             string alt = linesplit[4];
-            string mutationid = chr + val2string(*pos) + alt;
+            lineId = chr + long2string(*pos) + alt;
+            mutationId = chr + long2string(*pos);
+            vcfAlt[mutationId].push_back(alt);
 
             // check if the vcf file is sorted
             if(chr != LastChr){
@@ -53,17 +56,13 @@ void vcfreader::getvcfinfo(){
                 vcfPosChr[chr].push_back(pos);
             }else{
                 if(*pos < LastPos){
-                    error_exit("vcf is unsorted\n");
+                    error_exit("vcf file is unsorted\n");
                 }else if(*pos != LastPos){
                     vcfPosChr[chr].push_back(pos);
                 }
                 LastPos = *pos;
             }
-
-            vcfLineSplit[mutationid] = linesplit;
-            while(linesplit.size()!=0){
-                linesplit.pop_back();
-            }
+            vcfLineSplit[lineId] = linesplit;
 
         }else{
             cerr << line << " is unable to split\n";

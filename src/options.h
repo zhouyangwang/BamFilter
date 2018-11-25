@@ -34,6 +34,8 @@ public:
     bool snp;
     bool indel;
     bool debug;
+    bool continuous;
+    bool explain;
 
     bam_hdr_t* bamHeader;
 

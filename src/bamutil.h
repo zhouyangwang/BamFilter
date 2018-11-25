@@ -7,6 +7,7 @@
 #include "htslib/sam.h"
 #include "options.h"
 #include <map>
+#include <vector>
 
 using namespace std;
 
@@ -26,18 +27,20 @@ public:
     char fourbits2base(uint8_t val);
     short nmismatch(bam1_t *b);
     int tagInfoCalc(bam1_t *b, const char *tag);
-    void getquerypos(bam1_t *b);
 
     bool continuous_bases();
     void getaligned_pairs();
+    void getMismatchNumber();
+    void AddingMoreInforforRead(bam1_t *b);
+    void getquerypos(string refbase, bool continuous = false);
     void updatealigned_pairs();
-    bool ifmismatch();
-    void AddingMoreInforforRead(bam1_t *b, char refBase);
-    void updateReadInfo(bam1_t *b, char refBase);
-    int PrintAllReadInfo();
+    void inferAnotherInfo();
 
+    int PrintAllReadInfo();
     string getUMI(string qname, const string& prefix);
     string getUMI(bam1_t *b, const string& prefix);
+    void isSecondary(bam1_t *b);
+    void getUMI();
 
     uint8_t base2fourbits(char base);
     void dump(bam1_t *b);
@@ -61,12 +64,11 @@ public:
     long reference_end;
 
     int mismatchBaseQuality;
-    char mismatchbase;
+    string mismatchbase;
     int nmismatchbases;
     int query_alignment_start;
     int query_length;
 
-    bool mismatched;
     bool has_tag_XA;
     int template_length;
     long next_reference_start;
@@ -79,22 +81,24 @@ public:
     int nm;
     string MDString;
     int mapping_quality;
+    bool secodary_alignment;
     int visualSeqlength;
-    char varianttype;
+    string varianttype;
     vector<int> cigar;
     string cigarstring;
-
     string sequence;
-    bool copy;
+    string anotherMismatchLocation;
+    string umi;
+    long PosFromVCF;
+    map <int,vector<int>> aligned_pairs;
 
 private:
-    long PosFromVCF;
-    char referenceBase;
+    string referenceBase;
     int querypos;
     string quality;
-    map <int,vector<int>> aligned_pairs;
     int idInAligned_pairs;
     // id,alt,ref,type
+    bool InforCopy;
 
 };
 

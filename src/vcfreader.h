@@ -25,6 +25,7 @@ public:
     void fileExtract();
 
     map<string,vector<long*>> vcfPosChr;
+    map<string,vector<string>> vcfAlt;
     map<string,vector<string>> vcfLineSplit;
     map<string,vector<long*>> humanGenomeRepeat;
 

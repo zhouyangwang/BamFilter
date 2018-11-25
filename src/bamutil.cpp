@@ -1,9 +1,9 @@
 #include "bamutil.h"
 #include <sstream>
-#include <vector>
 #include <memory.h>
 
 BamUtil::BamUtil(bam1_t *b, long pos, Options *opt){
+    //InforCopy = false;
     mopt = opt;
     PosFromVCF = pos;
     chromosome = getChr(b);
@@ -11,15 +11,17 @@ BamUtil::BamUtil(bam1_t *b, long pos, Options *opt){
     reference_end = bam_endpos(b)-1;
     // get 0-based end;
     query_name = getQName(b);
-    mb = b;
+    AddingMoreInforforRead(b);
 }
 
 BamUtil::BamUtil(BamUtil *readinfo, long pos){
+    //InforCopy = true;
     PosFromVCF = pos;
     mopt = readinfo->mopt;
-    query_name = readinfo->query_name;
 
+    query_name = readinfo->query_name;
     reference_start = readinfo->reference_start;
+    reference_end = readinfo->reference_end;
     query_alignment_start = readinfo->query_alignment_start;
     query_length = readinfo->query_length;
 
@@ -28,18 +30,31 @@ BamUtil::BamUtil(BamUtil *readinfo, long pos){
     next_reference_start = readinfo->next_reference_start;
     is_reverse = readinfo->is_reverse;
     is_pair_mate_mapped = readinfo->is_pair_mate_mapped;
-
     averageQualOver10 = readinfo->averageQualOver10;
+
     copynumber = readinfo->copynumber;
     mapping_quality = readinfo->mapping_quality;
+    nmismatchbases = readinfo->nmismatchbases;
+    aligned_pairs = readinfo->aligned_pairs;
 
+    sequence = readinfo->sequence;
+    quality = readinfo->quality;
+
+    // debug
+    if(mopt->debug){
+        cigarstring = readinfo->cigarstring;
+        MDString = readinfo->MDString;
+        visualSeqlength = readinfo->visualSeqlength;
+        nm = readinfo->nm;
+    }
 }
 
 BamUtil::~BamUtil(){
-
+    aligned_pairs.clear();
+    // free memory;
 }
 
-void BamUtil::AddingMoreInforforRead(bam1_t *b, char refbase){
+void BamUtil::AddingMoreInforforRead(bam1_t *b){
 
     char tagCN[3] = "CN";
     char tagXA[3] = "XA";
@@ -54,86 +69,140 @@ void BamUtil::AddingMoreInforforRead(bam1_t *b, char refbase){
     is_reverse = b->core.flag & BAM_FREVERSE;
     is_pair_mate_mapped = (b->core.flag & BAM_FPAIRED) & ( !(b->core.flag & BAM_FUNMAP));
     mapping_quality = b->core.qual;
+    //read with secondary alignment is also hiden in GenomeBrowse
     query_length = sequence.size();
     //query length from the CIGAR alignment but does not include hard-clipped bases.
+    isSecondary(b);
+    if (mopt->DuplexUMIStat)
+        getUMI();
+    else
+        umi = "";
 
     getCigar(b);
     visualSeqlength = 0;
+    // visual bases: match, mismatched,and inserted bases, which meads deletion and softclipped bases are removed, intended for geneBrowse
     getaligned_pairs();
 
     copynumber = tagInfoCalc(b,tagCN);
     nm = tagInfoCalc(b,tagNM);
     has_tag_XA = (tagInfoCalc(b,tagXA) == 1)? true:false;
     tagInfoCalc(b,tagMD);
-
-    // changed part for read with multiple mutation
-    referenceBase = refbase;
-    varianttype = 'E';
-    getquerypos(b);
-    mismatched = ifmismatch();
-    mismatchBaseQuality = (varianttype == 'D' || varianttype == 'I')? -1: int(quality[querypos]);
-    mismatchbase = (varianttype == 'D' || varianttype == 'I')? varianttype:sequence[querypos];
-}
-
-void BamUtil::updateReadInfo(bam1_t *b,char refbase){
-    referenceBase = refbase;
-    varianttype = 'E';
-    getquerypos(b);
-    mismatched = ifmismatch();
-    mismatchBaseQuality = (varianttype == 'D' || varianttype == 'I')? -1: int(quality[querypos]);
-    mismatchbase = (varianttype == 'D' || varianttype == 'I')? varianttype:sequence[querypos];
+    getMismatchNumber();
+    if(nmismatchbases == 2)
+        updatealigned_pairs();
 }
 
 int BamUtil::PrintAllReadInfo(){
-
-    cout << query_name << "\n" << "base: " << mismatchbase <<"\tqual: "<< mismatchBaseQuality <<"\tstart:" << reference_start - query_alignment_start;
-    cout << "\tquerylength: " << query_length << "\tmismatced: " << mismatched <<"\tXA: " << has_tag_XA << "\tTemplateLen: "<< template_length;
+    cout << query_name << "\n" << "base: " << mismatchbase <<"\tqual: "<< mismatchBaseQuality <<"\tstart:" << reference_start;
+    cout << "\tquerylength: " << query_length << "\n:mismatchbases " << nmismatchbases <<"\tXA: " << has_tag_XA << "\tTemplateLen: "<< template_length;
     cout << "\tnext ref start: " << next_reference_start << "\treverse: " << is_reverse << "\tpair and mapped: " << is_pair_mate_mapped;
-    cout << "\tq10: " << averageQualOver10 << "\tterminal: " << mismatchAtTerminal << "\tcopyNumber: " << copynumber <<endl;
-    if(mopt->debug){
-        int i = 0;
-        cerr << "cigar: " << cigarstring << "\tMD: " << MDString  << endl;
-        while(i<aligned_pairs.size()){
-            cerr <<i <<"\t" << aligned_pairs[i][0] <<"\t" << aligned_pairs[i][1]<<"\t"<< aligned_pairs[i][2] << endl;
-            i++;
-        }
-    }
+    cout << "\tq10: " << averageQualOver10 << "\tterminal: " << mismatchAtTerminal << "\tcopyNumber: " << copynumber <<"\tmapping qual ";
+    cout << mapping_quality <<endl;
     return 1;
 }
 
-void BamUtil::getquerypos(bam1_t *b){
+void BamUtil::getquerypos(string refbase, bool continuous){
     int id  = 0;
-    int nBaseBeforMut = 0;
+    int nBaseBeforeMut = 0;
+    referenceBase = refbase;
+    varianttype = "D";
+    // nBaseBeforeMut refers to length of first bases to mismatched bases,while softclipped bases are removed and mismatched bases is included
+    // removing deletions and softclipped bases before mutation site while keeping insertions left
+    // mutation base was included when calculating
 
     while(id < aligned_pairs.size()){
         if(aligned_pairs[id][2] != 4 && aligned_pairs[id][2] != 2){
-            nBaseBeforMut++;
+            nBaseBeforeMut++;
         }
         if(aligned_pairs[id][1] == PosFromVCF){
             querypos = aligned_pairs[id][0];
-            if(id + 1 < aligned_pairs.size() && aligned_pairs[id+1][2] == 1){
-                varianttype = 'I';
-            }else if( sequence[querypos] == referenceBase){
-                varianttype = 'M';
-            }else {
-                // Mismatch base
-                varianttype = 'X';
+            if(querypos != -1){
+                if(id + 1 < aligned_pairs.size() && aligned_pairs[id+1][2] == 1){
+                    varianttype = "I";
+
+                }else if(continuous){
+                    mismatchbase = sequence.substr(querypos,2);
+                    if( mismatchbase == referenceBase){
+                        varianttype = "M";
+                    }else {
+                        // Mismatch base
+                        varianttype = "X";
+                    }
+
+                }else{
+                    mismatchbase = sequence.substr(querypos,1);
+                    if( mismatchbase == referenceBase){
+                        varianttype = "M";
+                    }else {
+                        // Mismatch base
+                        varianttype = "X";
+                    }
+                }
+            }else{
+                varianttype = "D";
             }
             break;
+        }
+        id++;
+        if(id == aligned_pairs.size()){
+            cout << "error in location " << query_name << "\t" << PosFromVCF << "\t" <<varianttype <<endl;
+            exit(-1);
+        }
+    }
+    idInAligned_pairs = id;
+    mismatchAtTerminal = (varianttype == "M")? -1:((visualSeqlength*0.1<nBaseBeforeMut &&
+                                                    visualSeqlength - nBaseBeforeMut + 1 > visualSeqlength*0.1)?false:true);
+    mismatchBaseQuality = (varianttype == "D" || varianttype == "I")? -1:quality[querypos];
+    mismatchbase = (varianttype == "D" || varianttype == "I") ? varianttype : mismatchbase;
 
-        }else if(aligned_pairs[id][1] > PosFromVCF){
+    if( varianttype != "M" && nmismatchbases == 2 && !continuous){
+        inferAnotherInfo();
+    }else
+        anotherMismatchLocation = "";
+
+    if(mopt->debug && varianttype != "M" && nmismatchbases <= 2){
+        cerr << "read name: " << query_name << "\tRange: " << reference_start <<"-" <<reference_end << "\tcigar: ";
+        cerr << cigarstring << "\tMD: " << MDString << "\tNM: " << nm << "\tmutation base: "<< mismatchbase << endl;
+        cerr << "FrontBases: " << nBaseBeforeMut << "\tBackBases: " << visualSeqlength - nBaseBeforeMut + 1;
+        cerr << "\tvisualSeqlength: " << visualSeqlength << "\tterminal calculation: " << visualSeqlength*0.1 << "<" << nBaseBeforeMut << " && ";
+        cerr << visualSeqlength - nBaseBeforeMut + 1 << ">" << visualSeqlength*0.1;
+        if(mismatchAtTerminal)
+            cerr << "\tmutations is located at terminal(10%) part of read\n";
+        else
+            cerr << "\tmutations is located at middle(11%-90%) part of read\n";
+
+        int x(0);
+        while(x<aligned_pairs.size()){
+            if(aligned_pairs[x][2] != 0)
+                cerr << aligned_pairs[x][0] <<"-"<< aligned_pairs[x][1]<<"-"<< aligned_pairs[x][2] << "\t";
+            x++;
+        }
+        cerr << endl;
+        if(anotherMismatchLocation.size() !=0)
+            cerr << "Another mismatch happened, " << anotherMismatchLocation <<endl << endl;
+    }
+}
+
+
+void BamUtil::inferAnotherInfo(){
+    int id(0);
+    while(id < aligned_pairs.size()){
+        if(id != idInAligned_pairs && aligned_pairs[id][2] != 0 && aligned_pairs[id][2] != 4){
+            if(id > idInAligned_pairs && aligned_pairs[id-1][2] != 0){
+            // in case of a snp located after the indel,while the indel is query target
+                id++;
+                continue;
+            }
+            if(id < idInAligned_pairs)
+                anotherMismatchLocation = int2string(idInAligned_pairs - id) + "L";
+            else
+                anotherMismatchLocation = int2string(id - idInAligned_pairs) + "R";
             break;
         }
         id++;
     }
-    idInAligned_pairs = id;
-    varianttype = (varianttype == 'E')?'D':varianttype;
-    varianttype = (varianttype == 'D' || varianttype == 'I')?varianttype: sequence[querypos];
-    // removing deletions and softclipped bases before mutation site while keeping insertions left
-    // mutation base wasn't included when calculating
-    float percent = float(nBaseBeforMut) / visualSeqlength;
-    mismatchAtTerminal = (varianttype == 'M')? -1:((percent > 0.1 && percent < 0.9)?false:true);
 }
+
 
 int BamUtil::tagInfoCalc(bam1_t *b, const char *tag){
     uint8_t* v= bam_aux_get(b,tag);
@@ -176,7 +245,7 @@ int BamUtil::tagInfoCalc(bam1_t *b, const char *tag){
             error_exit("unknown auxiliary type");
 
     }else if(auxtype == "Z" || auxtype == "H"){
-            // Z and H are treated equally as strings in htslib
+            // Z and H are treated equally as strings in htslib, MD string
             char * value = bam_aux2Z(v);
             MDString = value;
             return 1;
@@ -184,7 +253,7 @@ int BamUtil::tagInfoCalc(bam1_t *b, const char *tag){
     }else if(auxtype[0] == 'B'){
         //bytesize, nvalues, values = convert_binary_tag(v + 1)
         int value = v[1];
-        cout << auxtype << " value6 " << value << "\t" << b->core.qual << "\t"<< b->core.pos <<  query_name << endl;
+        cerr << auxtype << " value6 " << value << "\t" << b->core.qual << "\t"<< b->core.pos <<  query_name << endl;
         error_exit("unknown auxiliary type");
 
     }else{
@@ -268,6 +337,17 @@ string BamUtil::getUMI(string qname, const string& prefix) {
     return qname.substr(start, len-start);
 }
 
+void BamUtil::getUMI(){
+    size_t st = query_name.find("UMI_");
+    if(st == string::npos){
+        cerr << "--UMI is offered, while unable to extract UMI from read's name: " << query_name << endl;
+        cerr << "example: A00283:41:H5TLKDSXX:4:2174:6849:30452:UMI_GGA_GTA";
+        exit(-1);
+    }else{
+        umi = query_name.substr(st+4,query_name.size()-st-4);
+    }
+
+}
 string BamUtil::getQual(bam1_t *b) {
     uint8_t *data = bam_get_qual(b);
     int len = b->core.l_qseq;
@@ -325,7 +405,7 @@ void BamUtil::getCigar(bam1_t *b) {
     uint32_t *data = (uint32_t *)bam_get_cigar(b);
     int cigarNum = b->core.n_cigar;
     stringstream ss;
-    for(int i=0; i<cigarNum; i++) {
+    for(int i=0; i<cigarNum; i++){
         uint32_t val = data[i];
         char op = bam_cigar_opchr(val);
         uint32_t len = bam_cigar_oplen(val);
@@ -341,13 +421,6 @@ void BamUtil::getCigar(bam1_t *b) {
         }
     }
     cigarstring = ss.str();
-    /*
-    cout << "cigar " << ss.str() <<endl;
-    for(vector<int>::iterator iter1=cigar.begin();iter1!=cigar.end();iter1++){
-        cout << *iter1 << "\t"; iter1++; cout << *iter1 << "\t";
-    }
-    cout <<endl;
-    */
 }
 
 void BamUtil::getaligned_pairs(){
@@ -355,8 +428,7 @@ void BamUtil::getaligned_pairs(){
     int nalt = 0;
     int nref = reference_start;
     char op; int len; int location = 0;
-    nmismatchbases = 0; visualSeqlength = 0;
-
+    nmismatchbases = 0;
     while(location < cigar.size()){
         op = cigar[location];
         location++;
@@ -408,41 +480,18 @@ void BamUtil::getaligned_pairs(){
     }
 }
 
-bool BamUtil::ifmismatch(){
+void BamUtil::getMismatchNumber(){
     // 4S19M3D14M6D36M3D64M1I5M
     // MD:Z: 8G10^GAG9G4^TGGTGA36^CGG0 T11T8G4A5G3T1G2A1A17G7
-    if(mopt->debug)
-        updatealigned_pairs();
-
-    if(nm - nmismatchbases > mopt->ReadMaxMismatch){
-        return true;
-    }else if(nm - nmismatchbases <= 1){
-        return false;
-    }
-
-    updatealigned_pairs();
-    // mismatch bases need to located around mutation, distance should be equal or less than 2;
-    if(aligned_pairs.count(idInAligned_pairs) != 0){
-        if(aligned_pairs[idInAligned_pairs][2] == 0){
-            for(int i=idInAligned_pairs-2;i<idInAligned_pairs+3;i++){
-                if(aligned_pairs.count(i) != 0){
-                    if(aligned_pairs[i][2] != 0){
-                        return false;
-                    }
-                }
-            }
-            return true;
-        }
-        return true;
-    }
-    return true;
+    nmismatchbases = nm - nmismatchbases;
 }
 
 
 void BamUtil::updatealigned_pairs(){
+    // split "M" into mismatched base and matched base according to cigar and MD string
     bool deletion = false;
     map<int,char> baseCondition;
-    int j =0; string id;
+    int j =0; string id="";
     for(int i=0;i<MDString.size();i++){
         switch(MDString[i]){
         case '^':
@@ -462,9 +511,7 @@ void BamUtil::updatealigned_pairs(){
                 id = "";
             }
             if(deletion){
-                baseCondition[j] = 'D';
                 deletion = true;
-                j++;
                 break;
             }
             deletion = false;
@@ -486,8 +533,8 @@ void BamUtil::updatealigned_pairs(){
     int number (0);
     map<int,char>::iterator itr1 = baseCondition.begin();
     for(int i=0;i<aligned_pairs.size();i++){
-        if(aligned_pairs[i][1] == -1){
-            // SI
+        if(aligned_pairs[i][2] == 4 || aligned_pairs[i][2] == 2 || aligned_pairs[i][2] == 1 ){
+            // softclipped bases, indel
             continue;
         }
         if(itr1 != baseCondition.end()){
@@ -498,6 +545,7 @@ void BamUtil::updatealigned_pairs(){
         }
         number++;
     }
+    baseCondition.clear();
 }
 
 bool BamUtil::isPrimary(bam1_t *b) {
@@ -506,6 +554,14 @@ bool BamUtil::isPrimary(bam1_t *b) {
     else
         return true;
 }
+
+void BamUtil::isSecondary(bam1_t *b){
+    if(b->core.flag & BAM_FSECONDARY)
+        secodary_alignment = true;
+    else
+        secodary_alignment = false;
+}
+
 
 bool BamUtil::isProperPair(bam1_t *b) {
     return b->core.flag & BAM_FPROPER_PAIR;

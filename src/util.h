@@ -271,11 +271,24 @@ inline int str2int(string str)
 }
 
 //template <typename T>
-inline string val2string(long val){
+inline string long2string(long val){
     stringstream str;
     str << val;
     string result = str.str();
     return result;
 }
 
+inline string int2string(int val){
+    stringstream str;
+    str << val;
+    string result = str.str();
+    return result;
+}
+
+inline bool stFind(string refe, string alt){
+    size_t found = refe.find(alt);
+    if (found != string::npos)
+        return true;
+    return false;
+}
 #endif /* UTIL_H */
